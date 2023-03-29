@@ -27,9 +27,13 @@ import com.datastax.mgmtapi.helpers.NettyHttpClient;
 import com.datastax.mgmtapi.resources.models.CompactRequest;
 import com.datastax.mgmtapi.resources.models.CreateOrAlterKeyspaceRequest;
 import com.datastax.mgmtapi.resources.models.KeyspaceRequest;
+import com.datastax.mgmtapi.resources.models.RepairRequest;
 import com.datastax.mgmtapi.resources.models.ReplicationSetting;
 import com.datastax.mgmtapi.resources.models.ScrubRequest;
 import com.datastax.mgmtapi.resources.models.TakeSnapshotRequest;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import io.netty.handler.codec.http.FullHttpResponse;
 import org.apache.http.HttpStatus;
 import org.apache.http.client.utils.URIBuilder;
@@ -470,6 +474,39 @@ public class NonDestructiveOpsIT extends BaseDockerIntegrationTest
     }
 
     @Test
+    public void testGetKeyspaces() throws IOException, URISyntaxException
+    {
+        assumeTrue(IntegrationTestUtils.shouldRun());
+        ensureStarted();
+
+        NettyHttpClient client = new NettyHttpClient(BASE_URL);
+        String localDc = client.get(new URIBuilder(BASE_PATH + "/metadata/localdc").build().toURL())
+                .thenApply(this::responseAsString).join();
+
+        String ks = "getkeyspacestest";
+        createKeyspace(client, localDc, ks);
+
+
+        URI uri = new URIBuilder(BASE_PATH + "/ops/keyspace").build();
+        String response = client.get(uri.toURL())
+                .thenApply(this::responseAsString).join();
+        assertNotNull(response);
+        assertNotEquals("", response);
+        assertTrue(response.contains(ks));
+
+        URI uriFilter = new URIBuilder(BASE_PATH + "/ops/keyspace?keyspaceName=" + ks).build();
+        String responseFilter = client.get(uriFilter.toURL())
+                .thenApply(this::responseAsString).join();
+        assertNotNull(responseFilter);
+        assertNotEquals("", responseFilter);
+        
+        final ObjectMapper jsonMapper = new ObjectMapper();
+        List<String> keyspaces = jsonMapper.readValue(responseFilter, new TypeReference<List<String>>(){});
+        assertEquals(1, keyspaces.size());
+        assertEquals(ks, keyspaces.get(0));
+    }
+
+    @Test
     public void testGetSnapshotDetails() throws IOException, URISyntaxException, InterruptedException
     {
         assumeTrue(IntegrationTestUtils.shouldRun());
@@ -526,6 +563,25 @@ public class NonDestructiveOpsIT extends BaseDockerIntegrationTest
         assertTrue(entityObj instanceof List);
         entities = (List<Object>)entityObj;
         assertTrue(entities.isEmpty());
+    }
+
+    @Test
+    public void testRepair() throws IOException, URISyntaxException, InterruptedException
+    {
+        assumeTrue(IntegrationTestUtils.shouldRun());
+        ensureStarted();
+
+        NettyHttpClient client = new NettyHttpClient(BASE_URL);
+
+        URIBuilder uriBuilder = new URIBuilder(BASE_PATH + "/ops/node/repair");
+        URI repairUri = uriBuilder.build();
+
+        // execute repair
+        RepairRequest repairRequest = new RepairRequest("system_auth", null, Boolean.TRUE);
+        String requestAsJSON = WriterUtility.asString(repairRequest, MediaType.APPLICATION_JSON);
+
+        boolean repairSuccessful = client.post(repairUri.toURL(), requestAsJSON).thenApply(r -> r.status().code() == HttpStatus.SC_OK).join();
+        assertTrue("Repair request was not successful", repairSuccessful);
     }
 
     private void createKeyspace(NettyHttpClient client, String localDc, String keyspaceName) throws IOException, URISyntaxException

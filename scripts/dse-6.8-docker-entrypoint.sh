@@ -42,10 +42,11 @@ _sed-in-place() {
 if [ "$1" = 'mgmtapi' ]; then
 	echo "Starting Management API"
 
-	if ! grep -qxF "JVM_OPTS=\"\$JVM_OPTS -javaagent:${MAAC_PATH}/datastax-mgmtapi-agent-0.1.0-SNAPSHOT.jar\"" < ${CASSANDRA_CONF}/cassandra-env.sh ; then
+  MGMT_AGENT_JAR="$(find "${MAAC_PATH}" -name *datastax-mgmtapi-agent*.jar)"
+	if ! grep -qxF "JVM_OPTS=\"\$JVM_OPTS -javaagent:${MGMT_AGENT_JAR}\"" < ${CASSANDRA_CONF}/cassandra-env.sh ; then
 		# ensure newline at end of file
 		echo "" >> ${CASSANDRA_CONF}/cassandra-env.sh
-		echo "JVM_OPTS=\"\$JVM_OPTS -javaagent:${MAAC_PATH}/datastax-mgmtapi-agent-0.1.0-SNAPSHOT.jar\"" >> ${CASSANDRA_CONF}/cassandra-env.sh
+		echo "JVM_OPTS=\"\$JVM_OPTS -javaagent:${MGMT_AGENT_JAR}\"" >> ${CASSANDRA_CONF}/cassandra-env.sh
 	fi
 
   CASSANDRA_NATIVE_TRANSPORT_ADDRESS='0.0.0.0'
@@ -146,8 +147,10 @@ fi
 
 	MGMT_API_JAR="$(find "${MAAC_PATH}" -name *server*.jar)"
 
-	echo "Running" java ${MGMT_API_JAVA_OPTS} -Xms128m -Xmx128m -jar "$MGMT_API_JAR" $MGMT_API_ARGS
-	exec java ${MGMT_API_JAVA_OPTS} -Xms128m -Xmx128m -jar "$MGMT_API_JAR" $MGMT_API_ARGS
+	# use default of 128m heap if env variable not set
+	: "${MGMT_API_HEAP_SIZE:=128m}"
+	echo "Running" java ${MGMT_API_JAVA_OPTS} -Xms${MGMT_API_HEAP_SIZE} -Xmx${MGMT_API_HEAP_SIZE} -jar "$MGMT_API_JAR" $MGMT_API_ARGS
+	exec java ${MGMT_API_JAVA_OPTS} -Xms${MGMT_API_HEAP_SIZE} -Xmx${MGMT_API_HEAP_SIZE} -jar "$MGMT_API_JAR" $MGMT_API_ARGS
 
 fi
 

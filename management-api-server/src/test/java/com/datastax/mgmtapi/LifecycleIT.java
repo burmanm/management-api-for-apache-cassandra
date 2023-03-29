@@ -210,9 +210,80 @@ public class LifecycleIT extends BaseDockerIntegrationTest
                 ResultSet rs = session.execute(String.format("select replication from system_schema.keyspaces where keyspace_name='%s'", systemKeyspace));
 
                 Map<String, String> params = rs.one().getMap("replication", String.class, String.class);
-                assertEquals(params.get("dc1"), "1");
+                assertEquals("1", params.get("dc1"));
             }
 
+        }
+        finally
+        {
+            //Stop before next test starts
+            boolean stopped = client.post(URI.create("http://localhost/api/v0/lifecycle/stop").toURL(), null)
+                    .thenApply(r -> r.status().code() == HttpStatus.SC_OK).join();
+
+            assertTrue(stopped);
+        }
+    }
+
+    @Test
+    public void testDcReplicationFatorOverrides() throws IOException
+    {
+        assumeTrue(IntegrationTestUtils.shouldRun());
+
+        boolean ready = false;
+        NettyHttpClient client = null;
+        try
+        {
+            client = getClient();
+
+            //Configure
+            boolean configured = client.post(URI.create( BASE_PATH + "/lifecycle/configure?profile=dcrftest").toURL(),
+                    FileUtils.readFileToString(IntegrationTestUtils.getFile(this.getClass(), "dcrf-override-1.yaml")), "application/yaml")
+                    .thenApply(r -> r.status().code() == HttpStatus.SC_OK).join();
+
+            assertTrue(configured);
+
+            //Startup
+            boolean started = client.post(URI.create( BASE_PATH + "/lifecycle/start?profile=dcrftest").toURL(), null)
+                    .thenApply(r -> r.status().code() == HttpStatus.SC_CREATED).join();
+
+            assertTrue(started);
+
+            int tries = 0;
+            while (tries++ < 10)
+            {
+                ready = client.get(URI.create(BASE_PATH + "/probes/readiness").toURL())
+                        .thenApply(r -> r.status().code() == HttpStatus.SC_OK).join();
+
+                if (ready)
+                    break;
+
+                Uninterruptibles.sleepUninterruptibly(10, TimeUnit.SECONDS);
+            }
+
+            assertTrue(ready);
+
+            //addRole
+            boolean roleAdded = client.post(URI.create(BASE_PATH + "/ops/auth/role?username=dcrftest&password=dcrftest&is_superuser=true&can_login=true").toURL(), null)
+                    .thenApply(r -> r.status().code() == HttpStatus.SC_OK).join();
+
+            // create a session
+            CqlSession session =  new TestgCqlSessionBuilder()
+                    .withConfigLoader(DriverConfigLoader.programmaticBuilder()
+                            .withString(AUTH_PROVIDER_CLASS, PlainTextAuthProvider.class.getCanonicalName())
+                            .withString(AUTH_PROVIDER_USER_NAME, "dcrftest")
+                            .withString(AUTH_PROVIDER_PASSWORD, "dcrftest")
+                            .withString(LOAD_BALANCING_LOCAL_DATACENTER, "dc1")
+                            .build())
+                    .addContactPoint(new InetSocketAddress("127.0.0.1", 9042))
+                    .build();
+
+            for (String systemKeyspace : Arrays.asList("system_auth", "system_distributed", "system_traces"))
+            {
+                ResultSet rs = session.execute(String.format("select replication from system_schema.keyspaces where keyspace_name='%s'", systemKeyspace));
+
+                Map<String, String> params = rs.one().getMap("replication", String.class, String.class);
+                assertEquals("1", params.get("dc1"));
+            }
         }
         finally
         {

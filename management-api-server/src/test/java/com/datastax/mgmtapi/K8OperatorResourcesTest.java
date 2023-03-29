@@ -25,6 +25,7 @@ import com.datastax.mgmtapi.resources.TableOpsResources;
 import com.datastax.mgmtapi.resources.models.CompactRequest;
 import com.datastax.mgmtapi.resources.models.CreateOrAlterKeyspaceRequest;
 import com.datastax.mgmtapi.resources.models.KeyspaceRequest;
+import com.datastax.mgmtapi.resources.models.RepairRequest;
 import com.datastax.mgmtapi.resources.models.ReplicationSetting;
 import com.datastax.mgmtapi.resources.models.ScrubRequest;
 import com.datastax.mgmtapi.resources.models.TakeSnapshotRequest;
@@ -1236,5 +1237,78 @@ public class K8OperatorResourcesTest {
 
         Assert.assertEquals(HttpStatus.SC_OK, response.getStatus());
         verify(context.cqlService).executePreparedStatement(any(), eq("CALL NodeOps.clearSnapshots(?, ?)"), any());
+    }
+
+    @Test
+    public void testGetKeyspaces() throws Exception
+    {
+        Context context = setup();
+        ResultSet mockResultSet = mock(ResultSet.class);
+        Row mockRow = mock(Row.class);
+
+        MockHttpRequest request = MockHttpRequest.get(ROOT_PATH + "/ops/keyspace");
+        when(context.cqlService.executePreparedStatement(any(), anyString())).thenReturn(mockResultSet);
+        when(mockResultSet.one()).thenReturn(mockRow);
+        List<String> result = Arrays.asList("system_auth", "system", "system_distributed");
+        String resultAsJSON = WriterUtility.asString(result, MediaType.APPLICATION_JSON);
+        when(mockRow.getList(0, String.class)).thenReturn(result);
+
+        MockHttpResponse response = context.invoke(request);
+
+        Assert.assertEquals(HttpStatus.SC_OK, response.getStatus());
+        Assert.assertTrue(response.getContentAsString().contains(resultAsJSON));
+        verify(context.cqlService).executePreparedStatement(any(), eq("CALL NodeOps.getKeyspaces()"));
+    }
+
+    @Test
+    public void testGetKeyspacesWithFilter() throws Exception
+    {
+        Context context = setup();
+        ResultSet mockResultSet = mock(ResultSet.class);
+        Row mockRow = mock(Row.class);
+
+        MockHttpRequest request = MockHttpRequest.get(ROOT_PATH + "/ops/keyspace?keyspaceName=system");
+        when(context.cqlService.executePreparedStatement(any(), anyString())).thenReturn(mockResultSet);
+        when(mockResultSet.one()).thenReturn(mockRow);
+        List<String> result = Arrays.asList("system_auth", "system", "system_distributed");
+        List<String> filteredResult = Arrays.asList("system");
+        String filteredResultAsJSON = WriterUtility.asString(filteredResult, MediaType.APPLICATION_JSON);
+        when(mockRow.getList(0, String.class)).thenReturn(result);
+
+        MockHttpResponse response = context.invoke(request);
+
+        Assert.assertEquals(HttpStatus.SC_OK, response.getStatus());
+        Assert.assertTrue(response.getContentAsString().contains(filteredResultAsJSON));
+        verify(context.cqlService).executePreparedStatement(any(), eq("CALL NodeOps.getKeyspaces()"), any());
+    }
+
+    @Test
+    public void testRepair() throws Exception
+    {
+        Context context = setup();
+        when(context.cqlService.executePreparedStatement(any(), anyString())).thenReturn(null);
+
+        RepairRequest repairRequest = new RepairRequest("test_ks", null, Boolean.TRUE);
+        String repairRequestAsJSON = WriterUtility.asString(repairRequest, MediaType.APPLICATION_JSON);
+
+        MockHttpResponse response = postWithBody("/ops/node/repair", repairRequestAsJSON, context);
+
+        assertThat(response.getStatus()).isEqualTo(HttpStatus.SC_OK);
+        verify(context.cqlService).executePreparedStatement(any(), eq("CALL NodeOps.repair(?, ?, ?)"), eq("test_ks"), eq(null), eq(true));
+    }
+
+    @Test
+    public void testRepairRequiresKeyspaceName() throws Exception
+    {
+        Context context = setup();
+        when(context.cqlService.executePreparedStatement(any(), anyString())).thenReturn(null);
+
+        RepairRequest repairRequest = new RepairRequest(null, null, Boolean.TRUE);
+        String repairRequestAsJSON = WriterUtility.asString(repairRequest, MediaType.APPLICATION_JSON);
+
+        MockHttpResponse response = postWithBody("/ops/node/repair", repairRequestAsJSON, context);
+
+        assertThat(response.getStatus()).isEqualTo(HttpStatus.SC_BAD_REQUEST);
+        assertThat(response.getContentAsString()).isEqualTo("keyspaceName must be specified");
     }
 }
